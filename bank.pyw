@@ -1,8 +1,12 @@
 import sys
+import datetime
+import subprocess
 from postgres_cursor import db_cursor
 from PyQt5.QtWidgets import *
 from PyQt5.QtGui import *
-from PyQt5.QtCore import pyqtSlot, QTimer
+from PyQt5.QtCore import QTimer
+
+exe_path: str = "C:/Users/paul_/source/repos/p-bank/Debug/p-bank.exe"
 
 
 class Bank(QMainWindow):
@@ -17,6 +21,9 @@ class Bank(QMainWindow):
         self.sign_in = None
         self.sign_up = None
         self.sign_up_dialog = None
+        self.user_login = None
+        self.user_password = None
+        self.user_window = None
         self.autoFillBackground()
         self.init_ui()
 
@@ -104,8 +111,11 @@ class Bank(QMainWindow):
 
         if expected_password is not None:
             if self.password_edit.text() == expected_password:
+                self.user_login = self.login_edit.text()
+                self.user_password = expected_password
                 self.button_clicked('success')
-                # TODO: Create window with buttons
+                self.user_window = UserWindow(self, self.user_login)
+                self.user_window.show()
             else:
                 self.button_clicked('incorrect password')
 
@@ -201,6 +211,385 @@ class SignUp(QDialog):
         else:
             # Confirm creating new account
             self.fade(1)
+
+
+class UserWindow(QMainWindow):
+    def __init__(self, parent, user_login):
+        super(UserWindow, self).__init__(parent)
+        self.user_login = user_login
+        self.db_cursor = db_cursor()
+        self.time_on_screen: int = 1500
+        self.user_id = None
+        self.combo = None
+        self.combo_label = None
+        self.create_new_account = None
+        self.recall_bank_account = None
+        self.money_label = None
+        self.money_value = None
+        self.deposit_label = None
+        self.deposit_info = None
+        self.credit_label = None
+        self.credit_info = None
+        self.put_money_into_a_bank = None
+        self.take_a_credit = None
+        self.transfer_money = None
+        self.order_a_money = None
+        self.get_id()
+        self.autoFillBackground()
+        self.init_ui()
+
+    def get_id(self):
+        self.db_cursor.execute(
+            "SELECT user_id FROM bank.user_credentials WHERE user_login ='{}';".format(self.user_login))
+        self.user_id = self.db_cursor.fetchall()[0][0]
+
+    def init_ui(self):
+        QToolTip.setFont(QFont('SansSerif', 9))
+
+        self.center()
+        self.statusBar()
+        self.setFixedSize(500, 338)
+        self.setWindowTitle('P-Bank: User: {}'.format(self.user_login))
+        self.setWindowIcon(QIcon('bank.png'))
+
+        # --- create new account ---
+        self.create_new_account = QPushButton('Create new\naccount', self)
+        self.create_new_account.setStyleSheet("background-color: #ffffff")
+        self.create_new_account.resize(self.create_new_account.sizeHint())
+        self.create_new_account.move(350, 48)
+        self.create_new_account.clicked.connect(self.create_acc)
+
+        # --- recall bank account ---
+        self.recall_bank_account = QPushButton('Recall existing\nbank account', self)
+        self.recall_bank_account.setStyleSheet("background-color: #ffffff")
+        self.recall_bank_account.setToolTip(
+            "To delete an account,\nyour money value must be zero,\nyou do not have any credits or deposits")
+        self.recall_bank_account.resize(self.recall_bank_account.sizeHint())
+        self.recall_bank_account.move(350, 98)
+        self.recall_bank_account.clicked.connect(self.recall_acc)
+
+        # --- combo box ---
+        self.combo = QComboBox(self)
+        self.db_cursor.execute(
+            "select account_id from bank.user_account WHERE user_id = {} order by account_id;".format(self.user_id))
+        self.combo.addItems([str(it[0]) for it in self.db_cursor.fetchall()])
+        self.combo.move(230, 48)
+        self.combo.activated[str].connect(self.show_active_combo)
+
+        # --- combo label ---
+        self.combo_label = QLabel('Choose appropriate account number:', self)
+        self.combo_label.setFixedWidth(220)
+        self.combo_label.move(10, 48)
+
+        # --- money label ---
+        self.money_label = QLabel('Money:', self)
+        self.money_label.move(30, 98)
+
+        # --- money value ---
+        mn = self.get_money_value(int(self.combo.currentText()))
+        self.money_value = QLabel(str(mn), self)
+        self.money_value.move(80, 98)
+
+        # --- deposit label ---
+        self.deposit_label = QLabel('Deposit:', self)
+        self.deposit_label.move(30, 128)
+
+        # --- deposit info ---
+        di = self.get_deposit_info(int(self.combo.currentText()))
+        self.deposit_info = QLabel(str(di), self)
+        self.deposit_info.setFixedWidth(200)
+        self.deposit_info.move(30, 158)
+
+        # --- credit label ---
+        self.credit_label = QLabel('Credit:', self)
+        self.credit_label.move(30, 228)
+
+        # --- credit info ---
+        self.credit_info = QLabel('info', self)
+        self.credit_info.setFixedWidth(200)
+        self.credit_info.setFixedHeight(60)
+        self.credit_info.move(30, 258)
+        cred = self.get_credit_info(int(self.combo.currentText()))
+        if isinstance(cred, str):
+            self.credit_info.setText(cred)
+        else:
+            exp_d = datetime.date.strftime(cred[0][2], '%Y-%m-%d')
+            self.credit_info.setText(
+                'Credit money: {}\nInterest rate: {}\nExpiration date: {}'.format(cred[0][0], cred[0][1], exp_d))
+
+        # --- put money into a bank ---
+        self.put_money_into_a_bank = QPushButton('Put money\ninto a bank', self)
+        self.put_money_into_a_bank.setStyleSheet("background-color: #ffffff")
+        self.put_money_into_a_bank.resize(self.put_money_into_a_bank.sizeHint())
+        self.put_money_into_a_bank.move(350, 148)
+        self.put_money_into_a_bank.clicked.connect(self.put_money)
+
+        # --- take a credit ---
+        self.take_a_credit = QPushButton('Take a credit', self)
+        self.take_a_credit.setStyleSheet("background-color: #ffffff")
+        self.take_a_credit.resize(self.take_a_credit.sizeHint())
+        self.take_a_credit.move(350, 198)
+        self.take_a_credit.clicked.connect(self.take_money)
+
+        # --- transfer money ---
+        self.transfer_money = QPushButton('Transfer money', self)
+        self.transfer_money.setStyleSheet("background-color: #ffffff")
+        self.transfer_money.resize(self.transfer_money.sizeHint())
+        self.transfer_money.move(350, 234)
+        self.transfer_money.clicked.connect(self.trans_money)
+
+        # --- order a money ---
+        self.order_a_money = QPushButton('Order money', self)
+        self.order_a_money.setStyleSheet("background-color: #ffffff")
+        self.order_a_money.resize(self.order_a_money.sizeHint())
+        self.order_a_money.move(350, 270)
+        self.order_a_money.clicked.connect(self.ord_money)
+
+        self.show()
+
+    def show_active_combo(self, text):
+        # --- account id ---
+        account_id = int(text)
+
+        # --- money ---
+        money = self.get_money_value(account_id)
+        self.money_value.setText(str(money))
+
+        # --- deposit ---
+        dep = self.get_deposit_info(account_id)
+        if isinstance(dep, str):
+            self.deposit_info.setText(dep)
+        else:
+            pass
+
+        # --- credit ---
+        cred = self.get_credit_info(account_id)
+        if isinstance(cred, str):
+            self.credit_info.setText(cred)
+        else:
+            exp_d = datetime.date.strftime(cred[0][2], '%Y-%m-%d')
+            self.credit_info.setText(
+                'Credit money: {}\nInterest rate: {}\nExpiration date: {}'.format(cred[0][0], cred[0][1], exp_d))
+
+    def put_money(self):
+        account_id = int(self.combo.currentText())
+        # Сделать проверку через си код
+        if self.get_deposit_info(account_id) is None:
+            # do the work
+            self.db_cursor.execute()
+        else:
+            pass
+
+    def take_money(self):
+        account_id = int(self.combo.currentText())
+
+        if isinstance(self.get_credit_info(account_id), str):
+            cred_dial = CreditDialog(self, False, account_id, self.db_cursor)
+            cred_dial.show()
+        else:
+            cred_dial = CreditDialog(self, True, account_id, self.db_cursor)
+            cred_dial.show()
+
+    def trans_money(self):
+        account_id = int(self.combo.currentText())
+        # Сделать проверку через си код
+        pass
+
+    def ord_money(self):
+        account_id = int(self.combo.currentText())
+        # Сделать проверку через си код
+        pass
+
+    def get_money_value(self, account_id: int) -> float:
+        self.db_cursor.execute("select money from bank.user_account where account_id = {};".format(account_id))
+        money = self.db_cursor.fetchall()[0][0]
+        return money
+
+    def get_credit_info(self, account_id: int):
+        self.db_cursor.execute(
+            "select money, interest_rate, expiration_date from bank.user_credit where account_id = {};".format(
+                account_id))
+        info = self.db_cursor.fetchall()
+        if len(info) > 0:
+            return info
+        else:
+            return "Bank credit didn't detected"
+
+    def get_deposit_info(self, account_id: int):
+        self.db_cursor.execute(
+            "select money, interest_rate, expiration_date from bank.user_deposit where account_id = {};".format(
+                account_id))
+        info = self.db_cursor.fetchall()
+        if len(info) > 0:
+            return info
+        else:
+            return "Bank deposit didn't detected"
+
+    def create_acc(self):
+        self.db_cursor.execute("INSERT INTO bank.user_account VALUES (DEFAULT, {}, 0.0)".format(self.user_id))
+        self.button_clicked('Created new account successfully')
+        self.db_cursor.execute("select currval('bank.user_account_account_id_seq');")
+        self.combo.addItems([str(self.db_cursor.fetchall()[0][0])])
+        self.fade_cr(0)
+
+    def recall_acc(self):
+        account_id = int(self.combo.currentText())
+        money = self.get_money_value(account_id)
+        dep = self.get_deposit_info(account_id)
+        cred = self.get_credit_info(account_id)
+        if money == 0.0 and isinstance(dep, str) and isinstance(cred, str):
+            self.db_cursor.execute("delete from bank.user_account * where account_id = {}".format(account_id))
+            self.combo.clear()
+            self.db_cursor.execute("select account_id from bank.user_account WHERE user_id = {};".format(self.user_id))
+            self.combo.addItems([str(it[0]) for it in self.db_cursor.fetchall()])
+            self.show_active_combo(self.combo.currentText())
+            self.button_clicked('Deleted account #{} successfully'.format(account_id))
+            self.fade(0)
+        else:
+            self.fade(1)
+
+    def button_clicked(self, msg: str):
+        sender = self.sender()
+        self.statusBar().showMessage('{}: {}'.format(sender.text(), msg), self.time_on_screen)
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def fade(self, state):
+        if state == 1:
+            self.recall_bank_account.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.recall_bank_account.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade)
+
+    def unfade(self):
+        self.recall_bank_account.setStyleSheet("background-color: #ffffff")
+
+    def fade_cr(self, state):
+        if state == 1:
+            self.create_new_account.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.create_new_account.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade_cr)
+
+    def unfade_cr(self):
+        self.create_new_account.setStyleSheet("background-color: #ffffff")
+
+
+class CreditDialog(QDialog):
+    def __init__(self, parent, previous_credit, account_id, db_cursor):
+        super(CreditDialog, self).__init__(parent)
+        self.previous_credit = previous_credit
+        self.account_id = account_id
+        self.db_cursor = db_cursor
+        self.credit_1_lable = None
+        self.credit_1_button = None
+        self.credit_1_edit = None
+        self.credit_2_lable = None
+        self.credit_2_button = None
+        self.credit_2_edit = None
+        self.init_ui()
+
+    def init_ui(self):
+        self.setFixedSize(350, 200)
+        self.center()
+        self.setWindowTitle('P-Bank')
+        self.setWindowIcon(QIcon('bank.png'))
+
+        # --- credit 1 ---
+        self.credit_1_lable = QLabel(
+            'Credit: Pobeda\nDue date: 2 years\nInterest rate: 15.99%\nMax money: 25000\nMin money: 5000\nEnter apropriate value:',
+            self)
+        self.credit_1_lable.move(30, 25)
+        self.credit_1_edit = QLineEdit(self)
+        self.credit_1_edit.move(30, 130)
+        self.credit_1_button = QPushButton('Take money', self)
+        self.credit_1_button.setStyleSheet("background-color: #ffffff")
+        self.credit_1_button.resize(self.credit_1_button.sizeHint())
+        self.credit_1_button.clicked.connect(self.confirm_credit_1)
+        self.credit_1_button.move(30, 160)
+
+        # --- credit 2 ---
+        self.credit_2_lable = QLabel(
+            'Credit: Polet\nDue date: 5 years\nInterest rate: 12.99%\nMax money: 50000\nMin money: 20000\nEnter apropriate value:',
+            self)
+        self.credit_2_lable.move(200, 25)
+        self.credit_2_edit = QLineEdit(self)
+        self.credit_2_edit.move(200, 130)
+        self.credit_2_button = QPushButton('Take money', self)
+        self.credit_2_button.setStyleSheet("background-color: #ffffff")
+        self.credit_2_button.resize(self.credit_2_button.sizeHint())
+        self.credit_2_button.clicked.connect(self.confirm_credit_2)
+        self.credit_2_button.move(200, 160)
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def fade_1(self, state):
+        if state == 1:
+            self.credit_1_button.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.credit_1_button.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade_1)
+
+    def unfade_1(self):
+        self.credit_1_button.setStyleSheet("background-color: #ffffff")
+
+    def fade_2(self, state):
+        if state == 1:
+            self.credit_2_button.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.credit_2_button.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade_2)
+
+    def unfade_2(self):
+        self.credit_2_button.setStyleSheet("background-color: #ffffff")
+
+    def confirm_credit_1(self):
+        credit_money = float(self.credit_1_edit.text())
+        expiration_date = datetime.date.today()
+        expiration_date = expiration_date.replace(year=expiration_date.year + 2)
+        run_exe = subprocess.run(
+            [exe_path, 'credit', '{}'.format(self.previous_credit), '5000.0', '25000.0', '{}'.format(credit_money)],
+            stdout=subprocess.PIPE)
+        if run_exe.stdout == b'0':
+            self.db_cursor.execute(
+                "INSERT INTO bank.user_credit VALUES (DEFAULT, {account_id}, {money}, 15.99, {exp_date});".format(
+                    account_id=self.account_id, money=credit_money,
+                    exp_date="'{}'".format(datetime.date.strftime(expiration_date, '%Y-%m-%d'))))
+            self.db_cursor.execute(
+                "update bank.user_account set money = money + {money} where account_id = {account_id};".format(
+                    money=credit_money, account_id=self.account_id))
+            self.fade_1(0)
+            self.close()
+        elif run_exe.stdout == b'1':
+            self.fade_1(1)
+
+    def confirm_credit_2(self):
+        credit_money = float(self.credit_2_edit.text())
+        expiration_date = datetime.date.today()
+        expiration_date = expiration_date.replace(year=expiration_date.year + 5)
+        run_exe = subprocess.run(
+            [exe_path, 'credit', '{}'.format(self.previous_credit), '20000.0', '50000.0', '{}'.format(credit_money)],
+            stdout=subprocess.PIPE)
+        if run_exe.stdout == b'0':
+            self.db_cursor.execute(
+                "INSERT INTO bank.user_credit VALUES (DEFAULT, {account_id}, {money}, 12.99, {exp_date});".format(
+                    account_id=self.account_id, money=credit_money,
+                    exp_date="'{}'".format(datetime.date.strftime(expiration_date, '%Y-%m-%d'))))
+            self.db_cursor.execute(
+                "update bank.user_account set money = money + {money} where account_id = {account_id};".format(
+                    money=credit_money, account_id=self.account_id))
+            self.fade_2(0)
+            self.close()
+        elif run_exe.stdout == b'1':
+            self.fade_2(1)
 
 
 if __name__ == '__main__':
