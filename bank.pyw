@@ -234,6 +234,7 @@ class UserWindow(QMainWindow):
         self.take_a_credit = None
         self.transfer_money = None
         self.order_a_money = None
+        self.reload = None
         self.get_id()
         self.autoFillBackground()
         self.init_ui()
@@ -276,6 +277,13 @@ class UserWindow(QMainWindow):
         self.combo.move(230, 48)
         self.combo.activated[str].connect(self.show_active_combo)
 
+        # --- reload ---
+        self.reload = QPushButton('Reload', self)
+        self.reload.setStyleSheet("background-color: #ffffff")
+        self.reload.resize(self.reload.sizeHint())
+        self.reload.move(30, 15)
+        self.reload.clicked.connect(self.reload_all)
+
         # --- combo label ---
         self.combo_label = QLabel('Choose appropriate account number:', self)
         self.combo_label.setFixedWidth(220)
@@ -298,7 +306,15 @@ class UserWindow(QMainWindow):
         di = self.get_deposit_info(int(self.combo.currentText()))
         self.deposit_info = QLabel(str(di), self)
         self.deposit_info.setFixedWidth(200)
+        self.deposit_info.setFixedHeight(60)
         self.deposit_info.move(30, 158)
+        dep = self.get_deposit_info(int(self.combo.currentText()))
+        if isinstance(dep, str):
+            self.deposit_info.setText(dep)
+        else:
+            exp_d = datetime.date.strftime(dep[0][2], '%Y-%m-%d')
+            self.deposit_info.setText(
+                'Deposit money: {}\nInterest rate: {}\nExpiration date: {}'.format(dep[0][0], dep[0][1], exp_d))
 
         # --- credit label ---
         self.credit_label = QLabel('Credit:', self)
@@ -319,6 +335,7 @@ class UserWindow(QMainWindow):
 
         # --- put money into a bank ---
         self.put_money_into_a_bank = QPushButton('Put money\ninto a bank', self)
+        self.put_money_into_a_bank.setToolTip('Only one deposit per account')
         self.put_money_into_a_bank.setStyleSheet("background-color: #ffffff")
         self.put_money_into_a_bank.resize(self.put_money_into_a_bank.sizeHint())
         self.put_money_into_a_bank.move(350, 148)
@@ -326,6 +343,7 @@ class UserWindow(QMainWindow):
 
         # --- take a credit ---
         self.take_a_credit = QPushButton('Take a credit', self)
+        self.take_a_credit.setToolTip('Only one credit per account')
         self.take_a_credit.setStyleSheet("background-color: #ffffff")
         self.take_a_credit.resize(self.take_a_credit.sizeHint())
         self.take_a_credit.move(350, 198)
@@ -347,6 +365,10 @@ class UserWindow(QMainWindow):
 
         self.show()
 
+    def reload_all(self):
+        self.show_active_combo(self.combo.currentText())
+        self.fade_reload()
+
     def show_active_combo(self, text):
         # --- account id ---
         account_id = int(text)
@@ -360,7 +382,9 @@ class UserWindow(QMainWindow):
         if isinstance(dep, str):
             self.deposit_info.setText(dep)
         else:
-            pass
+            exp_d = datetime.date.strftime(dep[0][2], '%Y-%m-%d')
+            self.deposit_info.setText(
+                'Deposit money: {}\nInterest rate: {}\nExpiration date: {}'.format(dep[0][0], dep[0][1], exp_d))
 
         # --- credit ---
         cred = self.get_credit_info(account_id)
@@ -373,12 +397,15 @@ class UserWindow(QMainWindow):
 
     def put_money(self):
         account_id = int(self.combo.currentText())
-        # Сделать проверку через си код
-        if self.get_deposit_info(account_id) is None:
-            # do the work
-            self.db_cursor.execute()
+
+        if isinstance(self.get_deposit_info(account_id), str):
+            money = self.get_money_value(account_id)
+            depos_dial = DepositDialog(self, False, account_id, self.db_cursor, money)
+            depos_dial.show()
         else:
-            pass
+            money = self.get_money_value(account_id)
+            depos_dial = DepositDialog(self, True, account_id, self.db_cursor, money)
+            depos_dial.show()
 
     def take_money(self):
         account_id = int(self.combo.currentText())
@@ -392,13 +419,15 @@ class UserWindow(QMainWindow):
 
     def trans_money(self):
         account_id = int(self.combo.currentText())
-        # Сделать проверку через си код
-        pass
+        money = self.get_money_value(account_id)
+        trans_dial = TransferDialog(self, account_id, money, self.db_cursor)
+        trans_dial.show()
 
     def ord_money(self):
         account_id = int(self.combo.currentText())
-        # Сделать проверку через си код
-        pass
+        money = self.get_money_value(account_id)
+        order_dial = OrderDialog(self, account_id, money, self.db_cursor)
+        order_dial.show()
 
     def get_money_value(self, account_id: int) -> float:
         self.db_cursor.execute("select money from bank.user_account where account_id = {};".format(account_id))
@@ -457,6 +486,13 @@ class UserWindow(QMainWindow):
         cp = QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
+
+    def fade_reload(self):
+        self.reload.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade_reload)
+
+    def unfade_reload(self):
+        self.reload.setStyleSheet("background-color: #ffffff")
 
     def fade(self, state):
         if state == 1:
@@ -590,6 +626,264 @@ class CreditDialog(QDialog):
             self.close()
         elif run_exe.stdout == b'1':
             self.fade_2(1)
+
+
+class DepositDialog(QDialog):
+    def __init__(self, parent, previous_deposit, account_id, db_cursor, money):
+        super(DepositDialog, self).__init__(parent)
+        self.previous_deposit = previous_deposit
+        self.account_id = account_id
+        self.db_cursor = db_cursor
+        self.money = money
+        self.deposit_1_lable = None
+        self.deposit_1_button = None
+        self.deposit_1_edit = None
+        self.deposit_2_lable = None
+        self.deposit_2_button = None
+        self.deposit_2_edit = None
+        self.init_ui()
+
+    def init_ui(self):
+        self.setFixedSize(350, 200)
+        self.center()
+        self.setWindowTitle('P-Bank')
+        self.setWindowIcon(QIcon('bank.png'))
+
+        # --- deposit 1 ---
+        self.deposit_1_lable = QLabel(
+            'Deposit: Zapad\nDue date: 2 years\nInterest rate: 6.99%\nMax money: 25000\nMin money: 5000\nEnter apropriate value:',
+            self)
+        self.deposit_1_lable.move(30, 25)
+        self.deposit_1_edit = QLineEdit(self)
+        self.deposit_1_edit.move(30, 130)
+        self.deposit_1_button = QPushButton('Put money', self)
+        self.deposit_1_button.setStyleSheet("background-color: #ffffff")
+        self.deposit_1_button.resize(self.deposit_1_button.sizeHint())
+        self.deposit_1_button.clicked.connect(self.confirm_deposit_1)
+        self.deposit_1_button.move(30, 160)
+
+        # --- deposit 2 ---
+        self.deposit_2_lable = QLabel(
+            'Deposit: Vostok\nDue date: 5 years\nInterest rate: 10.99%\nMax money: 50000\nMin money: 20000\nEnter apropriate value:',
+            self)
+        self.deposit_2_lable.move(200, 25)
+        self.deposit_2_edit = QLineEdit(self)
+        self.deposit_2_edit.move(200, 130)
+        self.deposit_2_button = QPushButton('Put money', self)
+        self.deposit_2_button.setStyleSheet("background-color: #ffffff")
+        self.deposit_2_button.resize(self.deposit_2_button.sizeHint())
+        self.deposit_2_button.clicked.connect(self.confirm_deposit_2)
+        self.deposit_2_button.move(200, 160)
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def fade_1(self, state):
+        if state == 1:
+            self.deposit_1_button.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.deposit_1_button.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade_1)
+
+    def unfade_1(self):
+        self.deposit_1_button.setStyleSheet("background-color: #ffffff")
+
+    def fade_2(self, state):
+        if state == 1:
+            self.deposit_2_button.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.deposit_2_button.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade_2)
+
+    def unfade_2(self):
+        self.deposit_2_button.setStyleSheet("background-color: #ffffff")
+
+    def confirm_deposit_1(self):
+        deposit_money = float(self.deposit_1_edit.text())
+        expiration_date = datetime.date.today()
+        expiration_date = expiration_date.replace(year=expiration_date.year + 2)
+        run_exe = subprocess.run(
+            [exe_path, 'deposit', '{}'.format(self.previous_deposit), '5000.0', '25000.0', '{}'.format(self.money),
+             '{}'.format(deposit_money)], stdout=subprocess.PIPE)
+        if run_exe.stdout == b'0':
+            self.db_cursor.execute(
+                "INSERT INTO bank.user_deposit VALUES (DEFAULT, {account_id}, {money}, 6.99, {exp_date});".format(
+                    account_id=self.account_id, money=deposit_money,
+                    exp_date="'{}'".format(datetime.date.strftime(expiration_date, '%Y-%m-%d'))))
+            self.db_cursor.execute(
+                "update bank.user_account set money = money - {money} where account_id = {account_id};".format(
+                    money=deposit_money, account_id=self.account_id))
+            self.fade_1(0)
+            self.close()
+        elif run_exe.stdout == b'1':
+            self.fade_1(1)
+
+    def confirm_deposit_2(self):
+        deposit_money = float(self.deposit_2_edit.text())
+        expiration_date = datetime.date.today()
+        expiration_date = expiration_date.replace(year=expiration_date.year + 5)
+        run_exe = subprocess.run(
+            [exe_path, 'deposit', '{}'.format(self.previous_deposit), '20000.0', '50000.0', '{}'.format(self.money),
+             '{}'.format(deposit_money)], stdout=subprocess.PIPE)
+        if run_exe.stdout == b'0':
+            self.db_cursor.execute(
+                "INSERT INTO bank.user_deposit VALUES (DEFAULT, {account_id}, {money}, 10.99, {exp_date});".format(
+                    account_id=self.account_id, money=deposit_money,
+                    exp_date="'{}'".format(datetime.date.strftime(expiration_date, '%Y-%m-%d'))))
+            self.db_cursor.execute(
+                "update bank.user_account set money = money - {money} where account_id = {account_id};".format(
+                    money=deposit_money, account_id=self.account_id))
+            self.fade_2(0)
+            self.close()
+        elif run_exe.stdout == b'1':
+            self.fade_2(1)
+
+
+class TransferDialog(QDialog):
+    def __init__(self, parent, account_id, money, db_cursor):
+        super(TransferDialog, self).__init__(parent)
+        self.account_id = account_id
+        self.money = money
+        self.db_cursor = db_cursor
+        self.account_label = None
+        self.account_edit = None
+        self.amount_label = None
+        self.amount_edit = None
+        self.transfer_button = None
+        self.init_ui()
+
+    def init_ui(self):
+        self.setFixedSize(350, 200)
+        self.center()
+        self.setWindowTitle('P-Bank')
+        self.setWindowIcon(QIcon('bank.png'))
+
+        self.account_label = QLabel('Enter target account:', self)
+        self.account_label.move(30, 25)
+        self.account_edit = QLineEdit(self)
+        self.account_edit.move(30, 50)
+        self.transfer_button = QPushButton('Transfer', self)
+        self.transfer_button.setStyleSheet("background-color: #ffffff")
+        self.transfer_button.resize(self.transfer_button.sizeHint())
+        self.transfer_button.clicked.connect(self.transfer)
+        self.transfer_button.move(130, 100)
+        self.amount_label = QLabel('Enter money value:', self)
+        self.amount_label.move(180, 25)
+        self.amount_edit = QLineEdit(self)
+        self.amount_edit.move(180, 50)
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def fade(self, state):
+        if state == 1:
+            self.transfer_button.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.transfer_button.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade)
+
+    def unfade(self):
+        self.transfer_button.setStyleSheet("background-color: #ffffff")
+
+    def transfer(self):
+        if len(self.amount_edit.text()) > 0 and len(self.account_edit.text()) > 0:
+            transfer_money = float(self.amount_edit.text())
+            target_account = int(self.account_edit.text())
+            if target_account != self.account_id:
+                self.db_cursor.execute(
+                    "select count(*) from bank.user_account where account_id = {}".format(target_account))
+                ta = self.db_cursor.fetchall()
+
+                if ta[0][0] == 1:
+                    run_exe = subprocess.run(
+                        [exe_path, 'transfer', '{}'.format(self.money), '{}'.format(transfer_money)],
+                        stdout=subprocess.PIPE)
+                    if run_exe.stdout == b'0':
+                        self.db_cursor.execute(
+                            "update bank.user_account set money = money - {money} where account_id = {account_id};".format(
+                                money=transfer_money, account_id=self.account_id))
+
+                        self.db_cursor.execute(
+                            "update bank.user_account set money = money + {money} where account_id = {account_id};".format(
+                                money=transfer_money, account_id=target_account))
+
+                        self.fade(0)
+                        self.close()
+                    elif run_exe.stdout == b'1':
+                        self.fade(1)
+                else:
+                    self.fade(1)
+            else:
+                self.fade(1)
+        else:
+            self.fade(1)
+
+
+class OrderDialog(QDialog):
+    def __init__(self, parent, account_id, money, db_cursor):
+        super(OrderDialog, self).__init__(parent)
+        self.account_id = account_id
+        self.money = money
+        self.db_cursor = db_cursor
+        self.order_label = None
+        self.order_edit = None
+        self.order_button = None
+        self.init_ui()
+
+    def init_ui(self):
+        self.setFixedSize(350, 200)
+        self.center()
+        self.setWindowTitle('P-Bank')
+        self.setWindowIcon(QIcon('bank.png'))
+
+        self.order_label = QLabel('Enter money value:', self)
+        self.order_label.move(100, 25)
+        self.order_edit = QLineEdit(self)
+        self.order_edit.move(100, 50)
+        self.order_button = QPushButton('Order', self)
+        self.order_button.setStyleSheet("background-color: #ffffff")
+        self.order_button.resize(self.order_button.sizeHint())
+        self.order_button.clicked.connect(self.order)
+        self.order_button.move(120, 85)
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QDesktopWidget().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
+
+    def fade(self, state):
+        if state == 1:
+            self.order_button.setStyleSheet("background-color: red")
+        elif state == 0:
+            self.order_button.setStyleSheet("background-color: green")
+        QTimer.singleShot(300, self.unfade)
+
+    def unfade(self):
+        self.order_button.setStyleSheet("background-color: #ffffff")
+
+    def order(self):
+        if len(self.order_edit.text()) > 0:
+            order_money = float(self.order_edit.text())
+            run_exe = subprocess.run(
+                [exe_path, 'order', '{}'.format(self.money), '{}'.format(order_money)], stdout=subprocess.PIPE)
+            if run_exe.stdout == b'0':
+                self.db_cursor.execute(
+                    "update bank.user_account set money = money - {money} where account_id = {account_id};".format(
+                        money=order_money, account_id=self.account_id))
+
+                self.fade(0)
+                self.close()
+            elif run_exe.stdout == b'1':
+                self.fade(1)
+        else:
+            self.fade(1)
 
 
 if __name__ == '__main__':
